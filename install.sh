@@ -42,6 +42,31 @@ bootstrap_miniforge() {
     echo ""
 }
 
+# Antes de decidir que não há gerenciador nenhum (e sair instalando o
+# Miniforge de novo), tenta achar uma instalação já existente que só não
+# está no PATH desta sessão (ex: terminal novo depois de uma instalação
+# anterior, sem source no .bashrc).
+find_conda_sh() {
+    for base in "${HOME}/miniforge3" "${HOME}/mambaforge" "${HOME}/miniconda3" "${HOME}/anaconda3"; do
+        if [ -f "${base}/etc/profile.d/conda.sh" ]; then
+            echo "${base}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! command -v mamba &>/dev/null && ! command -v micromamba &>/dev/null && ! command -v conda &>/dev/null; then
+    if CONDA_BASE="$(find_conda_sh)"; then
+        # shellcheck disable=SC1091
+        source "${CONDA_BASE}/etc/profile.d/conda.sh"
+        if [ -f "${CONDA_BASE}/etc/profile.d/mamba.sh" ]; then
+            # shellcheck disable=SC1091
+            source "${CONDA_BASE}/etc/profile.d/mamba.sh"
+        fi
+    fi
+fi
+
 # detecta gerenciador de pacotes disponível; instala Miniforge se não achar nenhum
 if command -v mamba &>/dev/null; then
     PKG=mamba
