@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# By João Pitta (jlpitta82@gmail.com) and Beatriz Toscano (beatriz.melo@fiocruz.br)
+# At Fiocruz-PE
+#
+# ploidycheck — heterozygosity/ploidy call from short reads via k-mer profile.
+# Standalone extraction of the poliploidy module originally built for fungiflow
+# (github.com/jlpitta/fungiflow) — see README for the full method and validation.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SAMPLE=""
+R1=""
+R2=""
+OUTDIR=""
+THREADS=4
+KMER=21
+SMUDGE_L=7
+AB_THRESHOLD=0.5
+COVERAGE_TOLERANCE=0.3
+ENV_NAME="ploidycheck"
+
+usage() {
+    cat <<'EOF'
+ploidycheck — chama heterozigose/poliploidia a partir de short reads (perfil de k-mer)
+
+Uso:
+  ploidycheck --sample NOME --r1 R1.fastq.gz --r2 R2.fastq.gz --outdir DIR [opções]
+
+Obrigatórios:
+  --sample NOME            nome/prefixo da amostra
+  --r1 ARQUIVO              short reads R1 (fastq/fastq.gz)
+  --r2 ARQUIVO              short reads R2 (fastq/fastq.gz)
+  --outdir DIR              diretório de saída (criado se não existir)
+
+Opcionais:
+  --threads N               threads para FastK/Smudgeplot (default: 4)
+  --kmer-size N              tamanho do k-mer (default: 21)
+  --smudge-l N               cutoff -L do Smudgeplot (default: 7 — ver README)
+  --ab-fraction-threshold F  fração mínima da smudge AB p/ considerar dominante (default: 0.5)
+  --coverage-tolerance F     tolerância relativa entre kmercov (GenomeScope2) e
+                             cobertura 1n inferida (Smudgeplot) (default: 0.3)
+  --env NOME                 nome do ambiente conda/mamba (default: ploidycheck)
+  -h, --help                 mostra esta ajuda
+
+Saída (em DIR):
+  <sample>.ploidy_call.json   resultado final (ver README para o schema)
+  <sample>.histo               histograma de k-mer (Histex)
+  gs2_out/                     saída completa do GenomeScope2
+  <sample>_smudgeplot_report.json + PNGs   saída completa do Smudgeplot
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --sample) SAMPLE="$2"; shift 2 ;;
+        --r1) R1="$2"; shift 2 ;;
+        --r2) R2="$2"; shift 2 ;;
+        --outdir) OUTDIR="$2"; shift 2 ;;
+        --threads) THREADS="$2"; shift 2 ;;
+        --kmer-size) KMER="$2"; shift 2 ;;
+        --smudge-l) SMUDGE_L="$2"; shift 2 ;;
+        --ab-fraction-threshold) AB_THRESHOLD="$2"; shift 2 ;;
+        --coverage-tolerance) COVERAGE_TOLERANCE="$2"; shift 2 ;;
+        --env) ENV_NAME="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Opção desconhecida: $1" >&2; usage; exit 1 ;;
+    esac
+done
+
+if [ -z "${SAMPLE}" ] || [ -z "${R1}" ] || [ -z "${R2}" ] || [ -z "${OUTDIR}" ]; then
+    echo "ERRO: --sample, --r1, --r2 e --outdir são obrigatórios." >&2
+    usage
+    exit 1
+fi
+
+R1="$(realpath "${R1}")"
+R2="$(realpath "${R2}")"
+
+if command -v mamba &>/dev/null; then
+    PKG=mamba
+elif command -v micromamba &>/dev/null; then
+    PKG=micromamba
+elif command -v conda &>/dev/null; then
+    PKG=conda
+else
+    echo "ERRO: nenhum gerenciador conda encontrado (mamba, micromamba ou conda)." >&2
+    echo "Rode ./install.sh primeiro — ele instala o Miniforge automaticamente se necessário." >&2
+    exit 1
+fi
+RUN=("${PKG}" run -n "${ENV_NAME}")
+
+mkdir -p "${OUTDIR}"
+cd "${OUTDIR}"
+
+echo "[ploidycheck] 1/4 contando k-mers (FastK, k=${KMER})..."
+mkdir -p fastk_out
+"${RUN[@]}" FastK -k"${KMER}" -T"${THREADS}" -M8 -t1 -Nfastk_out/"${SAMPLE}"_fastk "${R1}" "${R2}"
+"${RUN[@]}" Histex -A fastk_out/"${SAMPLE}"_fastk > "${SAMPLE}".histo
+
+echo "[ploidycheck] 2/4 rodando GenomeScope2..."
+"${RUN[@]}" genomescope2 -i "${SAMPLE}".histo -o gs2_out -k "${KMER}" -p 2 -n "${SAMPLE}"
+
+echo "[ploidycheck] 3/4 rodando Smudgeplot (-L ${SMUDGE_L})..."
+"${RUN[@]}" smudgeplot hetmers -L "${SMUDGE_L}" -t "${THREADS}" -o "${SAMPLE}"_kmerpairs fastk_out/"${SAMPLE}"_fastk.ktab
+"${RUN[@]}" smudgeplot all -o "${SAMPLE}" -t "${SAMPLE}" --json_report "${SAMPLE}"_kmerpairs.smu
+
+echo "[ploidycheck] 4/4 combinando GenomeScope2 + Smudgeplot num veredito único..."
+"${RUN[@]}" python3 "${SCRIPT_DIR}/bin/ploidy_call.py" \
+    --sample "${SAMPLE}" \
+    --genomescope-model gs2_out/"${SAMPLE}"_model.txt \
+    --smudgeplot-json "${SAMPLE}"_smudgeplot_report.json \
+    --ab-fraction-threshold "${AB_THRESHOLD}" \
+    --coverage-tolerance "${COVERAGE_TOLERANCE}" \
+    --out "${SAMPLE}".ploidy_call.json
+
+echo ""
+echo "[ploidycheck] resultado: ${OUTDIR}/${SAMPLE}.ploidy_call.json"
+cat "${SAMPLE}".ploidy_call.json

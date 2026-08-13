@@ -1,0 +1,17 @@
+--- a/smudgeplot/smudgeplot.py
++++ b/smudgeplot/smudgeplot.py
+@@ -220,6 +220,7 @@
+                 "rel_size": smudge_sizes_rel,
+             }
+         )
++        self.smudge_tab = self.smudge_tab.astype({"structure": str})
+
+     def centrality_plot(self, output, fmt="pdf"):
+         fig, axs = plt.subplots(figsize=(8, 8))
+@@ -694,6 +695,7 @@
+         else:
+             sys.stdout.write(f"Unexpected smudge label {label} excluded from smudge report\n")
+
++    smudge_dict = {k: (v if isinstance(v, list) else [v]) for k, v in smudge_dict.items()}
+     smudge_df = DataFrame.from_dict(smudge_dict).fillna(0)
+     out_df = concat([meta_df, smudge_df], axis=1)
