@@ -1,7 +1,5 @@
 # ploidycheck
 
-*[Leia em português](README.pt-br.md)*
-
 Calls heterozygosity/polyploidy in an organism from short reads, using only the k-mer profile (no assembly, no reference genome). Extracted from the polyploidy module originally built inside [fungiflow](https://github.com/jlpitta/fungiflow), now as a standalone tool reusable by any pipeline — including [fungiflow](https://github.com/jlpitta/fungiflow) itself and [checkw](https://github.com/jlpitta/checkw), which now call it as an external dependency instead of reimplementing the logic.
 
 ## Why this exists
